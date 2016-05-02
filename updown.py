@@ -41,6 +41,16 @@ def call(cmd, args):
     subprocess.check_call(cmd)
 
 
+def nsexec(cmd, args=()):
+    """
+    Run a command in a network namespace.
+    """
+
+    cmd = "ip netns exec ? " + cmd
+    args = (NAMESPACE,) + args
+    call(cmd, args)
+
+
 def mask_to_cidr(mask):
     """
     Determine the CIDR suffix for a given dotted decimal IPv4 netmask.
@@ -66,7 +76,6 @@ v4_gateway = os.getenv("route_vpn_gateway")
 
 # DNS configuration
 dns_servers = []
-domain = None
 i = 1
 while True:
     o = os.getenv("foreign_option_%d" % i)
@@ -79,9 +88,6 @@ while True:
         dns_ip = o.partition(" DNS ")[2]
         dns_servers.append(dns_ip)
 
-    elif o.startswith("dhcp-option DOMAIN"):
-        domain = o.partition(" DOMAIN ")[2]
-
 # setup
 if script_type == "up":
     # create namespace
@@ -91,10 +97,8 @@ if script_type == "up":
         # ignore if namespace exists
         pass
 
-    def nsexec(cmd, args=()):
-        cmd = "ip netns exec ? " + cmd
-        args = (NAMESPACE,) + args
-        call(cmd, args)
+    # flush routing table
+    nsexec("ip route flush table all")
 
     # configure firewall in namespace
     nsexec("iptables -F")
@@ -102,6 +106,9 @@ if script_type == "up":
     nsexec("iptables -I FORWARD -j DROP")
     nsexec("iptables -I INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT")
     nsexec("iptables -I INPUT -i lo -j ACCEPT")
+    nsexec("iptables -I OUTPUT -d 10.0.0.0/8 -j DROP")
+    nsexec("iptables -I OUTPUT -d 172.16.0.0/12 -j DROP")
+    nsexec("iptables -I OUTPUT -d 192.168.0.0/16 -j DROP")
     nsexec("ip6tables -F")
     nsexec("ip6tables -I INPUT -j DROP")
     nsexec("ip6tables -I INPUT -i lo -j ACCEPT")
@@ -109,10 +116,22 @@ if script_type == "up":
     nsexec("ip6tables -I OUTPUT -j DROP")
     nsexec("ip6tables -I OUTPUT -o lo -j ACCEPT")
 
+    # create directory for resolv.conf
+    namespace_dir = os.path.join("/etc/netns", NAMESPACE)
+    if not os.path.exists(namespace_dir):
+        os.makedirs(namespace_dir)
+
+    # create resolv.conf
+    dns_config = os.path.join(namespace_dir, "resolv.conf")
+    with open(dns_config, "w") as fh:
+        for dns_server in dns_servers:
+            fh.write("nameserver " + dns_server + "\n")
+
     # move device to namespace
     call("ip link set ? netns ?", (device, NAMESPACE))
 
-    # enable loopback device in namespace
+    # start/restart loopback device in namespace
+    nsexec("ip link set lo down")
     nsexec("ip link set lo up")
 
     # enable device
@@ -128,22 +147,11 @@ if script_type == "up":
     # add default route
     nsexec("ip route add default via ?", (v4_gateway,))
 
-    # configure DNS
-    namespace_dir = os.path.join("/etc/netns", NAMESPACE)
-    if not os.path.exists(namespace_dir):
-        os.makedirs(namespace_dir)
-
-    dns_config = os.path.join(namespace_dir, "resolv.conf")
-    with open(dns_config, "w") as fh:
-        if domain is not None:
-            fh.write("domain " + domain + "\n")
-        for dns_server in dns_servers:
-            fh.write("nameserver " + dns_server + "\n")
 
 # teardown
 if script_type == "down":
-    # delete namespace
-    call("ip netns delete ?", (NAMESPACE,))
+    # OpenVPN already removed its NIC
+    # the namespace is not deleted, because some applications may still use it
 
     # unconfigure DNS
     namespace_dir = os.path.join("/etc/netns", NAMESPACE)
