@@ -144,6 +144,17 @@ if script_type == "up":
         for dns_server in dns_servers:
             fh.write("nameserver " + dns_server + "\n")
 
+    # create nsswitch.conf
+    real_nss_config = "/etc/nsswitch.conf"
+    nss_config = os.path.join(namespace_dir, "nsswitch.conf")
+    with open(real_nss_config, "r") as ih, open(nss_config, "w") as oh:
+        for line in ih.readlines():
+            if not line.startswith("hosts: "):
+                oh.write(line)
+            else:
+                # prevent DNS resolution via systemd
+                oh.write("hosts: files mymachines myhostname dns\n")
+
     # move device to namespace
     call("ip link set ? netns ?", (device, NAMESPACE))
 
@@ -178,4 +189,6 @@ if script_type == "down":
     namespace_dir = os.path.join("/etc/netns", NAMESPACE)
     dns_config = os.path.join(namespace_dir, "resolv.conf")
     os.remove(dns_config)
+    nss_config = os.path.join(namespace_dir, "nsswitch.conf")
+    os.remove(nss_config)
     os.rmdir(namespace_dir)
