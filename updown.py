@@ -8,6 +8,7 @@ import subprocess
 
 NAMESPACE = "ns1"
 DEBUG_ENV = False
+DEBUG_CALLS = False
 
 
 if DEBUG_ENV:
@@ -38,6 +39,8 @@ def call(cmd, args):
             j += 1
 
     # run command
+    if DEBUG_CALLS:
+        sys.stderr.write("executing: " + " ".join(cmd) + "\n")
     subprocess.check_call(cmd)
 
 
