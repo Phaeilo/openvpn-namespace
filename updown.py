@@ -74,9 +74,13 @@ v4_addr = os.getenv("ifconfig_local")
 v4_mask = os.getenv("ifconfig_netmask")
 v4_gateway = os.getenv("route_vpn_gateway")
 
+# IPv6 configuration
 v6_addr = os.getenv("ifconfig_ipv6_local")
 v6_netbits = os.getenv("ifconfig_ipv6_netbits")
 v6_gateway = os.getenv("ifconfig_ipv6_remote")
+v6_available = v6_addr is not None \
+        and v6_netbits is not None \
+        and v6_gateway is not None
 
 # DNS configuration
 dns_servers = []
@@ -110,20 +114,21 @@ if script_type == "up":
     nsexec("iptables -I FORWARD -j DROP")
     nsexec("iptables -I INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT")
     nsexec("iptables -I INPUT -i lo -j ACCEPT")
+    nsexec("iptables -I OUTPUT -j DROP")
     nsexec("iptables -I OUTPUT -o lo -j ACCEPT")
     nsexec("iptables -I OUTPUT -d 10.0.0.0/8 -j DROP")
     nsexec("iptables -I OUTPUT -d 172.16.0.0/12 -j DROP")
     nsexec("iptables -I OUTPUT -d 192.168.0.0/16 -j DROP")
     nsexec("iptables -I OUTPUT -o ? -j ACCEPT", (device,))
-    nsexec("iptables -P OUTPUT DROP")
     nsexec("ip6tables -F")
     nsexec("ip6tables -I INPUT -j DROP")
-    nsexec("ip6tables -I INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT")
     nsexec("ip6tables -I INPUT -i lo -j ACCEPT")
     nsexec("ip6tables -I FORWARD -j DROP")
     nsexec("ip6tables -I OUTPUT -j DROP")
     nsexec("ip6tables -I OUTPUT -o lo -j ACCEPT")
-    nsexec("ip6tables -I OUTPUT -o ? -j ACCEPT", (device,))
+    if v6_available:
+        nsexec("ip6tables -I INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT")
+        nsexec("ip6tables -I OUTPUT -o ? -j ACCEPT", (device,))
 
     # create directory for resolv.conf
     namespace_dir = os.path.join("/etc/netns", NAMESPACE)
@@ -149,17 +154,16 @@ if script_type == "up":
     # set mtu
     nsexec("ip link set dev ? mtu ?", (device, tun_mtu))
 
-    # configure v4 address
+    # configure v4
     address = "%s/%d" % (v4_addr, mask_to_cidr(v4_mask))
     nsexec("ip addr change ? dev ?", (address, device))
-
-    # configure v6 address
-    address = "%s/%s" % (v6_addr, v6_netbits)
-    nsexec("ip -6 addr change ? dev ?", (address, device))
-
-    # add default routes
     nsexec("ip route add default via ?", (v4_gateway,))
-    nsexec("ip -6 route add default via ?", (v6_gateway,))
+
+    # configure v6, if any
+    if v6_available:
+        address = "%s/%s" % (v6_addr, v6_netbits)
+        nsexec("ip -6 addr change ? dev ?", (address, device))
+        nsexec("ip -6 route add default via ?", (v6_gateway,))
 
 
 # teardown
